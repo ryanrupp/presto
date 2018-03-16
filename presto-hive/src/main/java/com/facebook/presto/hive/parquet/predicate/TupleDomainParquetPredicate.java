@@ -34,6 +34,7 @@ import parquet.column.statistics.FloatStatistics;
 import parquet.column.statistics.IntStatistics;
 import parquet.column.statistics.LongStatistics;
 import parquet.column.statistics.Statistics;
+import parquet.schema.OriginalType;
 import parquet.schema.PrimitiveType.PrimitiveTypeName;
 
 import java.util.ArrayList;
@@ -46,10 +47,12 @@ import static com.facebook.presto.hive.parquet.ParquetTypeUtils.getPrestoType;
 import static com.facebook.presto.hive.parquet.predicate.ParquetPredicateUtils.isStatisticsOverflow;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
+import static com.facebook.presto.spi.type.DateType.DATE;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.IntegerType.INTEGER;
 import static com.facebook.presto.spi.type.RealType.REAL;
 import static com.facebook.presto.spi.type.SmallintType.SMALLINT;
+import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
 import static com.facebook.presto.spi.type.TinyintType.TINYINT;
 import static com.facebook.presto.spi.type.Varchars.isVarcharType;
 import static java.lang.Float.floatToRawIntBits;
@@ -85,7 +88,7 @@ public class TupleDomainParquetPredicate
                 domain = Domain.all(type);
             }
             else {
-                domain = getDomain(type, numberOfRows, columnStatistics);
+                domain = getDomain(type, numberOfRows, columnStatistics, column.getPrimitiveType().getOriginalType());
             }
             domains.put(column, domain);
         }
@@ -101,7 +104,8 @@ public class TupleDomainParquetPredicate
 
         for (RichColumnDescriptor column : columns) {
             ParquetDictionaryDescriptor dictionaryDescriptor = dictionaries.get(column);
-            Domain domain = getDomain(getPrestoType(column), dictionaryDescriptor);
+            Domain domain = getDomain(getPrestoType(column), dictionaryDescriptor,
+                    column.getPrimitiveType().getOriginalType());
             if (domain != null) {
                 domains.put(column, domain);
             }
@@ -112,7 +116,8 @@ public class TupleDomainParquetPredicate
     }
 
     @VisibleForTesting
-    public static Domain getDomain(Type type, long rowCount, Statistics<?> statistics)
+    public static Domain getDomain(Type type, long rowCount, Statistics<?> statistics,
+                                   OriginalType originalType)
     {
         if (statistics == null || statistics.isEmpty()) {
             return Domain.all(type);
@@ -200,11 +205,32 @@ public class TupleDomainParquetPredicate
             ParquetStringStatistics parquetStringStatistics = new ParquetStringStatistics(minSlice, maxSlice);
             return createDomain(type, hasNullValue, parquetStringStatistics);
         }
+        else if (type.equals(DATE) && statistics instanceof IntStatistics) {
+            IntStatistics intStatistics = (IntStatistics) statistics;
+            // ignore corrupted statistics
+            if (intStatistics.genericGetMin() > intStatistics.genericGetMax()) {
+                return Domain.create(ValueSet.all(type), hasNullValue);
+            }
+            ParquetIntegerStatistics parquetIntegerStatistics = new ParquetIntegerStatistics((long) intStatistics.getMin(), (long) intStatistics.getMax());
+            return createDomain(type, hasNullValue, parquetIntegerStatistics);
+        }
+        else if (type.equals(TIMESTAMP) && originalType.equals(OriginalType.TIMESTAMP_MILLIS)
+                 && statistics instanceof LongStatistics) {
+            LongStatistics longStatistics = (LongStatistics) statistics;
+            // ignore corrupted statistics
+            if (longStatistics.genericGetMin() > longStatistics.genericGetMax()) {
+                return Domain.create(ValueSet.all(type), hasNullValue);
+            }
+            ParquetIntegerStatistics parquetIntegerStatistics = new ParquetIntegerStatistics(longStatistics.genericGetMin(), longStatistics.genericGetMax());
+            return createDomain(type, hasNullValue, parquetIntegerStatistics);
+        }
+
         return Domain.create(ValueSet.all(type), hasNullValue);
     }
 
     @VisibleForTesting
-    public static Domain getDomain(Type type, ParquetDictionaryDescriptor dictionaryDescriptor)
+    public static Domain getDomain(Type type, ParquetDictionaryDescriptor dictionaryDescriptor,
+                                   OriginalType originalType)
     {
         if (dictionaryDescriptor == null) {
             return null;
@@ -227,7 +253,8 @@ public class TupleDomainParquetPredicate
         }
 
         int dictionarySize = dictionaryPage.get().getDictionarySize();
-        if (type.equals(BIGINT) && columnDescriptor.getType() == PrimitiveTypeName.INT64) {
+        if ((type.equals(BIGINT) || (type.equals(TIMESTAMP) && originalType.equals(OriginalType.TIMESTAMP_MILLIS)))
+                && columnDescriptor.getType() == PrimitiveTypeName.INT64) {
             List<Domain> domains = new ArrayList<>();
             for (int i = 0; i < dictionarySize; i++) {
                 domains.add(Domain.singleValue(type, dictionary.decodeToLong(i)));
@@ -235,7 +262,7 @@ public class TupleDomainParquetPredicate
             domains.add(Domain.onlyNull(type));
             return Domain.union(domains);
         }
-        else if (type.equals(BIGINT) && columnDescriptor.getType() == PrimitiveTypeName.INT32) {
+        else if ((type.equals(BIGINT) || type.equals(DATE)) && columnDescriptor.getType() == PrimitiveTypeName.INT32) {
             List<Domain> domains = new ArrayList<>();
             for (int i = 0; i < dictionarySize; i++) {
                 domains.add(Domain.singleValue(type, (long) dictionary.decodeToInt(i)));

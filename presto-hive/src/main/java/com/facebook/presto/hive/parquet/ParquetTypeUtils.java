@@ -17,6 +17,7 @@ import com.facebook.presto.hive.HiveColumnHandle;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.type.BigintType;
 import com.facebook.presto.spi.type.BooleanType;
+import com.facebook.presto.spi.type.DateType;
 import com.facebook.presto.spi.type.DecimalType;
 import com.facebook.presto.spi.type.DoubleType;
 import com.facebook.presto.spi.type.IntegerType;
@@ -108,9 +109,9 @@ public final class ParquetTypeUtils
             case DOUBLE:
                 return DoubleType.DOUBLE;
             case INT32:
-                return createDecimalType(descriptor).orElse(IntegerType.INTEGER);
+                return getInt32Type(descriptor);
             case INT64:
-                return createDecimalType(descriptor).orElse(BigintType.BIGINT);
+                return getInt64Type(descriptor);
             case INT96:
                 return TimestampType.TIMESTAMP;
             case FIXED_LEN_BYTE_ARRAY:
@@ -193,6 +194,35 @@ public final class ParquetTypeUtils
             return Optional.empty();
         }
         DecimalMetadata decimalMetadata = descriptor.getPrimitiveType().getDecimalMetadata();
-        return Optional.of(DecimalType.createDecimalType(decimalMetadata.getPrecision(), decimalMetadata.getScale()));
+        return Optional.of(createDecimalType(decimalMetadata));
+    }
+
+    private static Type createDecimalType(DecimalMetadata decimalMetadata)
+    {
+        return DecimalType.createDecimalType(decimalMetadata.getPrecision(), decimalMetadata.getScale());
+    }
+
+    private static Type getInt32Type(RichColumnDescriptor descriptor)
+    {
+        switch (descriptor.getPrimitiveType().getOriginalType()) {
+            case DECIMAL:
+                return createDecimalType(descriptor.getPrimitiveType().getDecimalMetadata());
+            case DATE:
+                return DateType.DATE;
+            default:
+                return IntegerType.INTEGER;
+        }
+    }
+
+    private static Type getInt64Type(RichColumnDescriptor descriptor)
+    {
+        switch (descriptor.getPrimitiveType().getOriginalType()) {
+            case DECIMAL:
+                return createDecimalType(descriptor.getPrimitiveType().getDecimalMetadata());
+            case TIMESTAMP_MILLIS:
+                return TimestampType.TIMESTAMP;
+            default:
+                return BigintType.BIGINT;
+        }
     }
 }

@@ -13,16 +13,21 @@
  */
 package com.facebook.presto.hive.parquet;
 
+import com.facebook.presto.hive.parquet.predicate.TupleDomainParquetPredicate;
+import com.facebook.presto.spi.predicate.Domain;
 import com.facebook.presto.spi.predicate.ValueSet;
+import com.facebook.presto.spi.type.Type;
 import org.testng.annotations.Test;
 import parquet.column.statistics.BinaryStatistics;
 import parquet.column.statistics.BooleanStatistics;
 import parquet.column.statistics.DoubleStatistics;
 import parquet.column.statistics.FloatStatistics;
+import parquet.column.statistics.IntStatistics;
 import parquet.column.statistics.LongStatistics;
+import parquet.column.statistics.Statistics;
 import parquet.io.api.Binary;
+import parquet.schema.OriginalType;
 
-import static com.facebook.presto.hive.parquet.predicate.TupleDomainParquetPredicate.getDomain;
 import static com.facebook.presto.spi.predicate.Domain.all;
 import static com.facebook.presto.spi.predicate.Domain.create;
 import static com.facebook.presto.spi.predicate.Domain.notNull;
@@ -30,10 +35,12 @@ import static com.facebook.presto.spi.predicate.Domain.singleValue;
 import static com.facebook.presto.spi.predicate.Range.range;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
+import static com.facebook.presto.spi.type.DateType.DATE;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.IntegerType.INTEGER;
 import static com.facebook.presto.spi.type.RealType.REAL;
 import static com.facebook.presto.spi.type.SmallintType.SMALLINT;
+import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
 import static com.facebook.presto.spi.type.TinyintType.TINYINT;
 import static com.facebook.presto.spi.type.VarcharType.createUnboundedVarcharType;
 import static io.airlift.slice.Slices.utf8Slice;
@@ -164,6 +171,57 @@ public class TestTupleDomainParquetPredicate
                 create(ValueSet.ofRanges(range(REAL, (long) floatToRawIntBits(minimum), true, (long) floatToRawIntBits(maximum), true)), false));
 
         assertEquals(getDomain(REAL, 10, floatColumnStats(maximum, minimum)), create(ValueSet.all(REAL), false));
+    }
+
+    @Test
+    public void testDate()
+    {
+        assertEquals(getDomain(DATE, 0, null), all(DATE));
+
+        assertEquals(getDomain(DATE, 10, intColumnStats(100, 100)), singleValue(DATE, 100L));
+
+        assertEquals(getDomain(DATE, 10, intColumnStats(0, 100)), create(ValueSet.ofRanges(range(DATE, 0L, true, 100L, true)), false));
+
+        // Ignore corrupt stats
+        assertEquals(getDomain(DATE, 10, intColumnStats(200, 100)), create(ValueSet.all(DATE), false));
+    }
+
+    @Test
+    public void testTimestamp()
+    {
+        long currentTimeMillis = System.currentTimeMillis();
+
+        assertEquals(getDomain(TIMESTAMP, 0, null, OriginalType.TIMESTAMP_MILLIS), all(TIMESTAMP));
+
+        // Only should work with TIMESTAMP_MILLIS at the moment
+        assertEquals(getDomain(TIMESTAMP, 10, longColumnStats(currentTimeMillis, currentTimeMillis), OriginalType.INT_64), notNull(TIMESTAMP));
+
+        assertEquals(getDomain(TIMESTAMP, 10, longColumnStats(currentTimeMillis, currentTimeMillis), OriginalType.TIMESTAMP_MILLIS),
+                singleValue(TIMESTAMP, currentTimeMillis));
+
+        assertEquals(getDomain(TIMESTAMP, 10, longColumnStats(currentTimeMillis, currentTimeMillis * 1000), OriginalType.TIMESTAMP_MILLIS),
+                create(ValueSet.ofRanges(range(TIMESTAMP, currentTimeMillis, true, currentTimeMillis * 1000, true)), false));
+
+        // Ignore corrupt stats
+        assertEquals(getDomain(TIMESTAMP, 10, longColumnStats(200, 100), OriginalType.TIMESTAMP_MILLIS),
+                create(ValueSet.all(TIMESTAMP), false));
+    }
+
+    private static Domain getDomain(Type type, long rowCount, Statistics<?> statistics)
+    {
+        return getDomain(type, rowCount, statistics, null);
+    }
+
+    private static Domain getDomain(Type type, long rowCount, Statistics<?> statistics, OriginalType originalType)
+    {
+        return TupleDomainParquetPredicate.getDomain(type, rowCount, statistics, originalType);
+    }
+
+    private static IntStatistics intColumnStats(int minimum, int maximum)
+    {
+        IntStatistics statistics = new IntStatistics();
+        statistics.setMinMax(minimum, maximum);
+        return statistics;
     }
 
     private static FloatStatistics floatColumnStats(float minimum, float maximum)
