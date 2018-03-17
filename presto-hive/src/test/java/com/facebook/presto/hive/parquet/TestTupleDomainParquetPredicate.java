@@ -16,6 +16,7 @@ package com.facebook.presto.hive.parquet;
 import com.facebook.presto.hive.parquet.predicate.TupleDomainParquetPredicate;
 import com.facebook.presto.spi.predicate.Domain;
 import com.facebook.presto.spi.predicate.ValueSet;
+import com.facebook.presto.spi.type.DateTimeEncoding;
 import com.facebook.presto.spi.type.Type;
 import org.testng.annotations.Test;
 import parquet.column.statistics.BinaryStatistics;
@@ -40,7 +41,7 @@ import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.IntegerType.INTEGER;
 import static com.facebook.presto.spi.type.RealType.REAL;
 import static com.facebook.presto.spi.type.SmallintType.SMALLINT;
-import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
+import static com.facebook.presto.spi.type.TimestampWithTimeZoneType.TIMESTAMP_WITH_TIME_ZONE;
 import static com.facebook.presto.spi.type.TinyintType.TINYINT;
 import static com.facebook.presto.spi.type.VarcharType.createUnboundedVarcharType;
 import static io.airlift.slice.Slices.utf8Slice;
@@ -187,24 +188,26 @@ public class TestTupleDomainParquetPredicate
     }
 
     @Test
-    public void testTimestamp()
+    public void testTimestampWithTimeZone()
     {
         long currentTimeMillis = System.currentTimeMillis();
 
-        assertEquals(getDomain(TIMESTAMP, 0, null, OriginalType.TIMESTAMP_MILLIS), all(TIMESTAMP));
+        assertEquals(getDomain(TIMESTAMP_WITH_TIME_ZONE, 0, null, OriginalType.TIMESTAMP_MILLIS), all(TIMESTAMP_WITH_TIME_ZONE));
 
         // Only should work with TIMESTAMP_MILLIS at the moment
-        assertEquals(getDomain(TIMESTAMP, 10, longColumnStats(currentTimeMillis, currentTimeMillis), OriginalType.INT_64), notNull(TIMESTAMP));
+        assertEquals(getDomain(TIMESTAMP_WITH_TIME_ZONE, 10, longColumnStats(currentTimeMillis, currentTimeMillis), OriginalType.INT_64), notNull(TIMESTAMP_WITH_TIME_ZONE));
 
-        assertEquals(getDomain(TIMESTAMP, 10, longColumnStats(currentTimeMillis, currentTimeMillis), OriginalType.TIMESTAMP_MILLIS),
-                singleValue(TIMESTAMP, currentTimeMillis));
+        assertEquals(getDomain(TIMESTAMP_WITH_TIME_ZONE, 10, longColumnStats(currentTimeMillis, currentTimeMillis), OriginalType.TIMESTAMP_MILLIS),
+                singleValue(TIMESTAMP_WITH_TIME_ZONE, DateTimeEncoding.packDateTimeWithZone(currentTimeMillis, 0)));
 
-        assertEquals(getDomain(TIMESTAMP, 10, longColumnStats(currentTimeMillis, currentTimeMillis * 1000), OriginalType.TIMESTAMP_MILLIS),
-                create(ValueSet.ofRanges(range(TIMESTAMP, currentTimeMillis, true, currentTimeMillis * 1000, true)), false));
+        assertEquals(getDomain(TIMESTAMP_WITH_TIME_ZONE, 10, longColumnStats(currentTimeMillis, currentTimeMillis * 1000), OriginalType.TIMESTAMP_MILLIS),
+                create(ValueSet.ofRanges(range(TIMESTAMP_WITH_TIME_ZONE,
+                        DateTimeEncoding.packDateTimeWithZone(currentTimeMillis, 0), true,
+                        DateTimeEncoding.packDateTimeWithZone(currentTimeMillis * 1000, 0), true)), false));
 
         // Ignore corrupt stats
-        assertEquals(getDomain(TIMESTAMP, 10, longColumnStats(200, 100), OriginalType.TIMESTAMP_MILLIS),
-                create(ValueSet.all(TIMESTAMP), false));
+        assertEquals(getDomain(TIMESTAMP_WITH_TIME_ZONE, 10, longColumnStats(currentTimeMillis, currentTimeMillis - 1000), OriginalType.TIMESTAMP_MILLIS),
+                create(ValueSet.all(TIMESTAMP_WITH_TIME_ZONE), false));
     }
 
     private static Domain getDomain(Type type, long rowCount, Statistics<?> statistics)

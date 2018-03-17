@@ -20,6 +20,7 @@ import com.facebook.presto.spi.predicate.Domain;
 import com.facebook.presto.spi.predicate.Range;
 import com.facebook.presto.spi.predicate.TupleDomain;
 import com.facebook.presto.spi.predicate.ValueSet;
+import com.facebook.presto.spi.type.DateTimeEncoding;
 import com.facebook.presto.spi.type.Type;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
@@ -52,7 +53,7 @@ import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.IntegerType.INTEGER;
 import static com.facebook.presto.spi.type.RealType.REAL;
 import static com.facebook.presto.spi.type.SmallintType.SMALLINT;
-import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
+import static com.facebook.presto.spi.type.TimestampWithTimeZoneType.TIMESTAMP_WITH_TIME_ZONE;
 import static com.facebook.presto.spi.type.TinyintType.TINYINT;
 import static com.facebook.presto.spi.type.Varchars.isVarcharType;
 import static java.lang.Float.floatToRawIntBits;
@@ -214,14 +215,18 @@ public class TupleDomainParquetPredicate
             ParquetIntegerStatistics parquetIntegerStatistics = new ParquetIntegerStatistics((long) intStatistics.getMin(), (long) intStatistics.getMax());
             return createDomain(type, hasNullValue, parquetIntegerStatistics);
         }
-        else if (type.equals(TIMESTAMP) && originalType.equals(OriginalType.TIMESTAMP_MILLIS)
+        else if (type.equals(TIMESTAMP_WITH_TIME_ZONE) && originalType == OriginalType.TIMESTAMP_MILLIS
                  && statistics instanceof LongStatistics) {
             LongStatistics longStatistics = (LongStatistics) statistics;
             // ignore corrupted statistics
             if (longStatistics.genericGetMin() > longStatistics.genericGetMax()) {
                 return Domain.create(ValueSet.all(type), hasNullValue);
             }
-            ParquetIntegerStatistics parquetIntegerStatistics = new ParquetIntegerStatistics(longStatistics.genericGetMin(), longStatistics.genericGetMax());
+
+            // Parquet TIMESTAMP_MILLIS = milliseconds from Unix Epoch so pack in UTC time zone to the value
+            long utcPackedMin = DateTimeEncoding.packDateTimeWithZone(longStatistics.genericGetMin(), 0);
+            long utcPackedMax = DateTimeEncoding.packDateTimeWithZone(longStatistics.genericGetMax(), 0);
+            ParquetIntegerStatistics parquetIntegerStatistics = new ParquetIntegerStatistics(utcPackedMin, utcPackedMax);
             return createDomain(type, hasNullValue, parquetIntegerStatistics);
         }
 
@@ -253,8 +258,7 @@ public class TupleDomainParquetPredicate
         }
 
         int dictionarySize = dictionaryPage.get().getDictionarySize();
-        if ((type.equals(BIGINT) || (type.equals(TIMESTAMP) && originalType.equals(OriginalType.TIMESTAMP_MILLIS)))
-                && columnDescriptor.getType() == PrimitiveTypeName.INT64) {
+        if (type.equals(BIGINT) && columnDescriptor.getType() == PrimitiveTypeName.INT64) {
             List<Domain> domains = new ArrayList<>();
             for (int i = 0; i < dictionarySize; i++) {
                 domains.add(Domain.singleValue(type, dictionary.decodeToLong(i)));
@@ -290,6 +294,16 @@ public class TupleDomainParquetPredicate
             List<Domain> domains = new ArrayList<>();
             for (int i = 0; i < dictionarySize; i++) {
                 domains.add(Domain.singleValue(type, Slices.wrappedBuffer(dictionary.decodeToBinary(i).getBytes())));
+            }
+            domains.add(Domain.onlyNull(type));
+            return Domain.union(domains);
+        }
+        else if (type.equals(TIMESTAMP_WITH_TIME_ZONE) && originalType == OriginalType.TIMESTAMP_MILLIS
+                    && columnDescriptor.getType() == PrimitiveTypeName.INT64) {
+            List<Domain> domains = new ArrayList<>(dictionarySize + 1);
+            for (int i = 0; i < dictionarySize; i++) {
+                long utcPackedValue = DateTimeEncoding.packDateTimeWithZone(dictionary.decodeToLong(i), 0);
+                domains.add(Domain.singleValue(type, utcPackedValue));
             }
             domains.add(Domain.onlyNull(type));
             return Domain.union(domains);

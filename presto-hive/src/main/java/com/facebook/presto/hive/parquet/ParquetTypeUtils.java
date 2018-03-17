@@ -23,6 +23,7 @@ import com.facebook.presto.spi.type.DoubleType;
 import com.facebook.presto.spi.type.IntegerType;
 import com.facebook.presto.spi.type.RealType;
 import com.facebook.presto.spi.type.TimestampType;
+import com.facebook.presto.spi.type.TimestampWithTimeZoneType;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.VarcharType;
 import parquet.column.ColumnDescriptor;
@@ -34,6 +35,7 @@ import parquet.io.ParquetDecodingException;
 import parquet.io.PrimitiveColumnIO;
 import parquet.schema.DecimalMetadata;
 import parquet.schema.MessageType;
+import parquet.schema.OriginalType;
 
 import java.util.List;
 import java.util.Optional;
@@ -41,7 +43,9 @@ import java.util.Optional;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Optional.empty;
+import static parquet.schema.OriginalType.DATE;
 import static parquet.schema.OriginalType.DECIMAL;
+import static parquet.schema.OriginalType.TIMESTAMP_MILLIS;
 
 public final class ParquetTypeUtils
 {
@@ -204,25 +208,30 @@ public final class ParquetTypeUtils
 
     private static Type getInt32Type(RichColumnDescriptor descriptor)
     {
-        switch (descriptor.getPrimitiveType().getOriginalType()) {
-            case DECIMAL:
-                return createDecimalType(descriptor.getPrimitiveType().getDecimalMetadata());
-            case DATE:
-                return DateType.DATE;
-            default:
-                return IntegerType.INTEGER;
+        OriginalType originalType = descriptor.getPrimitiveType().getOriginalType();
+        if (originalType == DECIMAL) {
+            return createDecimalType(descriptor.getPrimitiveType().getDecimalMetadata());
+        }
+        else if (originalType == DATE) {
+            return DateType.DATE;
+        }
+        else {
+            return IntegerType.INTEGER;
         }
     }
 
     private static Type getInt64Type(RichColumnDescriptor descriptor)
     {
-        switch (descriptor.getPrimitiveType().getOriginalType()) {
-            case DECIMAL:
-                return createDecimalType(descriptor.getPrimitiveType().getDecimalMetadata());
-            case TIMESTAMP_MILLIS:
-                return TimestampType.TIMESTAMP;
-            default:
-                return BigintType.BIGINT;
+        OriginalType originalType = descriptor.getPrimitiveType().getOriginalType();
+        if (originalType == DECIMAL) {
+            return createDecimalType(descriptor.getPrimitiveType().getDecimalMetadata());
+        }
+        else if (originalType == TIMESTAMP_MILLIS) {
+            // Implicitly with UTC time zone
+            return TimestampWithTimeZoneType.TIMESTAMP_WITH_TIME_ZONE;
+        }
+        else {
+            return BigintType.BIGINT;
         }
     }
 }
